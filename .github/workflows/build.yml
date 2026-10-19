@@ -1,0 +1,26 @@
+name: Build macOS app
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build app and native widget
+        run: ./scripts/build.sh
+      - name: Verify bundle and code signatures
+        run: ./scripts/verify.sh
+      - name: Package ZIP and DMG
+        run: ./scripts/package.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LidWork-macos-arm64
+          path: dist/
+          if-no-files-found: error
