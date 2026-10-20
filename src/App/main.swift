@@ -2,6 +2,8 @@ import AppKit
 import IOKit
 import CoreGraphics
 import WidgetKit
+import SwiftUI
+import OSLog
 
 let appTitle = "合盖工作开关"
 
@@ -100,12 +102,8 @@ func displayJob() throws -> (loaded: Bool, pid: Int32?) {
 }
 
 func readDisplayAwake() throws -> Bool {
-    guard let pid = try displayJob().pid else { return false }
-    let assertions = try runCommand("/usr/bin/pmset", ["-g", "assertions"])
-    guard assertions.code == 0 else { throw failure("无法读取显示器唤醒状态。") }
-    return displayCanvasOnline() && assertions.output.components(separatedBy: .newlines).contains {
-        $0.contains("pid \(pid)(LidWorkDisplay):") && $0.contains("PreventUserIdleDisplaySleep")
-    }
+    guard let value = DeviceSnapshot.current().display else { throw failure("暂时无法读取镜像保活状态，请刷新后重试。") }
+    return value
 }
 
 func setDisplayAwake(_ desired: Bool) throws {
@@ -152,277 +150,217 @@ func setDisplayAwake(_ desired: Bool) throws {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
+    let model = ControlModel()
     let sleepSwitch = NSSwitch()
     let displaySwitch = NSSwitch()
-    let displayStatusLabel = NSTextField(labelWithString: "正在读取状态…")
-    let displayDetailLabel = NSTextField(wrappingLabelWithString: "")
-    let statusLabel = NSTextField(labelWithString: "正在读取状态…")
-    let detailLabel = NSTextField(wrappingLabelWithString: "")
-    let powerLabel = NSTextField(labelWithString: "")
-    let feedbackLabel = NSTextField(wrappingLabelWithString: "")
-    let symbol = NSImageView()
-    var timer: Timer?
-    var busy = false
     var widget: ControlMenu?
-    var lastNativeWidgetState = ""
-    var pendingNativeURLs: [URL] = []
+    private var timer: Timer?
+    private var busy = false
+    private var pendingNativeURLs: [URL] = []
+    private var lastNativeWidgetState = ""
+    private var lastPowerRead = Date.distantPast
+    private var trailingReload: DispatchWorkItem?
+    private let logger = Logger(subsystem: "local.yzq.lidwork", category: "AppSync")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        repairWidgetAfterUpdate()
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 666), styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.title = appTitle
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.isMovableByWindowBackground = true
+        window.center()
+        window.contentView = NSHostingView(rootView: ControlDashboard(model: model,
+            setSleep: { [weak self] desired in self?.applySleep(desired) },
+            setDisplay: { [weak self] desired in self?.applyDisplay(desired) },
+            mirror: { [weak self] in guard let self, let controls = self.widget else { return }; controls.connectIPad(controls.mirrorButton) },
+            refresh: { [weak self] in self?.manualRefresh() }))
+
         let menu = NSMenu()
-        let item = NSMenuItem()
-        menu.addItem(item)
+        let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "退出\(appTitle)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        item.submenu = appMenu
+        appItem.submenu = appMenu
+        menu.addItem(appItem)
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        let close = fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        close.target = window
+        fileItem.submenu = fileMenu
+        menu.addItem(fileItem)
         NSApp.mainMenu = menu
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 540), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = appTitle
-        window.isReleasedWhenClosed = false
-        window.center()
-        let root = NSView()
-        window.contentView = root
-
-        symbol.image = NSImage(systemSymbolName: "laptopcomputer", accessibilityDescription: "Mac 合盖工作")
-        symbol.symbolConfiguration = .init(pointSize: 36, weight: .medium)
-        symbol.contentTintColor = .controlAccentColor
-        symbol.frame = NSRect(x: 28, y: 445, width: 50, height: 56)
-        root.addSubview(symbol)
-
-        let heading = NSTextField(labelWithString: "合盖与画面")
-        heading.font = .systemFont(ofSize: 25, weight: .semibold)
-        heading.frame = NSRect(x: 93, y: 472, width: 370, height: 34)
-        root.addSubview(heading)
-        let subtitle = NSTextField(labelWithString: "接电源和使用电池时均生效")
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 95, y: 448, width: 370, height: 22)
-        root.addSubview(subtitle)
-
-        let card = NSBox(frame: NSRect(x: 28, y: 316, width: 444, height: 110))
-        card.boxType = .custom
-        card.fillColor = .controlBackgroundColor
-        card.borderColor = .separatorColor
-        card.cornerRadius = 14
-        root.addSubview(card)
-
-        statusLabel.font = .systemFont(ofSize: 19, weight: .semibold)
-        statusLabel.frame = NSRect(x: 45, y: 382, width: 330, height: 29)
-        root.addSubview(statusLabel)
-        detailLabel.font = .systemFont(ofSize: 13)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.frame = NSRect(x: 45, y: 334, width: 340, height: 40)
-        root.addSubview(detailLabel)
-        sleepSwitch.frame = NSRect(x: 400, y: 375, width: 50, height: 28)
-        sleepSwitch.target = self
-        sleepSwitch.action = #selector(toggleSleep(_:))
-        sleepSwitch.setAccessibilityLabel("合盖继续工作")
-        root.addSubview(sleepSwitch)
-
-        let displayCard = NSBox(frame: NSRect(x: 28, y: 186, width: 444, height: 116))
-        displayCard.boxType = .custom
-        displayCard.fillColor = .controlBackgroundColor
-        displayCard.borderColor = .separatorColor
-        displayCard.cornerRadius = 14
-        root.addSubview(displayCard)
-        displayStatusLabel.font = .systemFont(ofSize: 19, weight: .semibold)
-        displayStatusLabel.frame = NSRect(x: 45, y: 258, width: 340, height: 29)
-        root.addSubview(displayStatusLabel)
-        displayDetailLabel.font = .systemFont(ofSize: 13)
-        displayDetailLabel.textColor = .secondaryLabelColor
-        displayDetailLabel.frame = NSRect(x: 45, y: 204, width: 344, height: 44)
-        root.addSubview(displayDetailLabel)
-        displaySwitch.frame = NSRect(x: 400, y: 251, width: 50, height: 28)
-        displaySwitch.target = self
-        displaySwitch.action = #selector(toggleDisplay(_:))
-        displaySwitch.setAccessibilityLabel("保持画面与 iPad 镜像")
-        root.addSubview(displaySwitch)
-
-        powerLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        powerLabel.frame = NSRect(x: 32, y: 151, width: 440, height: 22)
-        root.addSubview(powerLabel)
-        let notes = NSTextField(wrappingLabelWithString: "关闭窗口后继续生效；合盖使用 iPad 请开启两个开关。\n放进包里前，请关闭两个开关。")
-        notes.font = .systemFont(ofSize: 12)
-        notes.textColor = .secondaryLabelColor
-        notes.frame = NSRect(x: 32, y: 65, width: 438, height: 44)
-        root.addSubview(notes)
-        feedbackLabel.font = .systemFont(ofSize: 12)
-        feedbackLabel.textColor = .secondaryLabelColor
-        feedbackLabel.frame = NSRect(x: 32, y: 20, width: 438, height: 42)
-        root.addSubview(feedbackLabel)
-
         widget = ControlMenu(owner: self)
-        if let mirrorButton = widget?.mirrorButton {
-            mirrorButton.frame = NSRect(x: 32, y: 113, width: 255, height: 30)
-            root.addSubview(mirrorButton)
-        }
         NotificationCenter.default.addObserver(self, selector: #selector(fullWindowClosed), name: NSWindow.willCloseNotification, object: window)
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in self?.refresh() }
+        NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey), name: NSWindow.didBecomeKeyNotification, object: window)
+        refresh(forceWidget: true)
+        let poll = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+        poll.tolerance = 0.3
+        RunLoop.main.add(poll, forMode: .common)
+        timer = poll
     }
-
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showFullPanel()
-        return true
-    }
-
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showFullPanel(); return true }
+    func applicationWillTerminate(_ notification: Notification) { timer?.invalidate(); trailingReload?.cancel() }
     func showFullPanel() {
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        refresh(forceWidget: true)
     }
     @objc func fullWindowClosed() { NSApp.setActivationPolicy(.accessory) }
+    @objc func windowBecameKey() { refresh(forceWidget: true) }
+    func manualRefresh() {
+        refresh(forceWidget: true)
+        updateFeedback("已读取系统状态，正在更新桌面小组件。")
+    }
+    func updateFeedback(_ message: String) { model.feedback = message }
+
+    private func repairWidgetAfterUpdate() {
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        let key = "widgetRegisteredBuild"
+        guard UserDefaults.standard.string(forKey: key) != build else { return }
+        let extensionURL = Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns/LidWorkNativeWidget.appex")
+        let executable = extensionURL.appendingPathComponent("Contents/MacOS/LidWorkNativeWidget").path
+        do {
+            let processes = try runCommand("/bin/ps", ["-axo", "pid=,comm="])
+            guard processes.code == 0 else { return }
+            // A suspended old widget retains its old Bundle version after a drag
+            // update. It has no unsaved user data; only this exact executable is reset.
+            for pid in OwnedWidgetProcess.identifiers(in: processes.output, executablePath: executable) {
+                _ = try runCommand("/bin/kill", ["-KILL", String(pid)])
+            }
+            let registration = try runCommand("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-f", Bundle.main.bundlePath])
+            let plugin = try runCommand("/usr/bin/pluginkit", ["-a", extensionURL.path])
+            if registration.code == 0 && plugin.code == 0 {
+                UserDefaults.standard.set(build, forKey: key)
+                logger.notice("Widget registration repaired for build=\(build, privacy: .public)")
+            }
+        } catch { logger.error("Widget update repair could not complete") }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
-        let wasEmpty = pendingNativeURLs.isEmpty
         pendingNativeURLs.append(contentsOf: urls.filter { $0.scheme == "lidwork" })
-        if wasEmpty { processNextNativeURL() }
+        processNextNativeURL()
     }
     func processNextNativeURL() {
-        guard !pendingNativeURLs.isEmpty else { return }
-        guard !busy else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.processNextNativeURL() }
-            return
-        }
+        guard !busy && !model.connecting, !pendingNativeURLs.isEmpty else { return }
         let url = pendingNativeURLs.removeFirst()
-        let requested = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "enabled" })?.value
-        switch url.host {
-        case "sleep":
-            let desired = requested.map { $0 == "1" } ?? !((try? readEnabled()) ?? false)
-            sleepSwitch.state = desired ? .on : .off
-            toggleSleep(sleepSwitch)
-        case "display":
-            let desired = requested.map { $0 == "1" } ?? !((try? readDisplayAwake()) ?? false)
-            displaySwitch.state = desired ? .on : .off
-            toggleDisplay(displaySwitch)
-        case "mirror": widget?.connectFromNativeWidget()
-        case "show": showFullPanel()
-        default: break
-        }
-        if !pendingNativeURLs.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.processNextNativeURL() }
-        }
-    }
-    func updateFeedback(_ message: String) {
-        feedbackLabel.stringValue = message
-        widget?.feedback(message)
+        do {
+            switch ControlAction(rawValue: url.host ?? "") {
+            case .sleep: applySleep(ControlAction.desired(for: url, current: try readEnabled()))
+            case .display: applyDisplay(ControlAction.desired(for: url, current: try readDisplayAwake()))
+            case .mirror: widget?.connectFromNativeWidget()
+            case .refresh: manualRefresh()
+            case .show: showFullPanel()
+            case nil: break
+            }
+        } catch { presentError(error.localizedDescription) }
+        if !busy && !model.connecting { DispatchQueue.main.async { [weak self] in self?.processNextNativeURL() } }
     }
 
-    func refresh() {
+    func refresh(forceWidget: Bool = false) {
         guard !busy else { return }
-        do {
-            let enabled = try readEnabled()
-            sleepSwitch.state = enabled ? .on : .off
-            sleepSwitch.isEnabled = true
-            statusLabel.stringValue = enabled ? "合盖工作 · 已开启" : "合盖工作 · 已关闭"
-            statusLabel.textColor = enabled ? .systemGreen : .labelColor
-            detailLabel.stringValue = enabled ? "合盖后保持运行，方便继续连接和工作。" : "使用系统原有的睡眠设置。"
-            symbol.contentTintColor = enabled ? .systemGreen : .secondaryLabelColor
-        } catch {
-            statusLabel.stringValue = "无法读取状态"
-            statusLabel.textColor = .systemOrange
-            detailLabel.stringValue = error.localizedDescription
-            sleepSwitch.isEnabled = false
+        let snapshot = DeviceSnapshot.current()
+        model.snapshot = snapshot
+        sleepSwitch.state = snapshot.sleep == true ? .on : .off
+        displaySwitch.state = snapshot.display == true ? .on : .off
+        if forceWidget || Date().timeIntervalSince(lastPowerRead) > 30 {
+            model.power = batterySummary()
+            lastPowerRead = Date()
         }
-        do {
-            let enabled = try readDisplayAwake()
-            displaySwitch.state = enabled ? .on : .off
-            displaySwitch.isEnabled = true
-            displayStatusLabel.stringValue = enabled ? "镜像保活 · 已开启" : "镜像保活 · 已关闭"
-            displayStatusLabel.textColor = enabled ? .systemGreen : .labelColor
-            displayDetailLabel.stringValue = "保持画面常亮，并提供 iPad 随航显示画布。\n先开启两个开关，再连接 iPad 屏幕镜像。"
-        } catch {
-            displayStatusLabel.stringValue = "镜像保活 · 状态未知"
-            displayStatusLabel.textColor = .systemOrange
-            displayDetailLabel.stringValue = error.localizedDescription
-            displaySwitch.isEnabled = false
+        widget?.update(sleep: snapshot.sleep == true, display: snapshot.display == true, sleepValid: snapshot.sleep != nil, displayValid: snapshot.display != nil, powerText: model.power)
+        if forceWidget || snapshot.fingerprint != lastNativeWidgetState {
+            lastNativeWidgetState = snapshot.fingerprint
+            requestWidgetReload()
         }
-        powerLabel.stringValue = batterySummary()
-        widget?.update(sleep: sleepSwitch.state == .on, display: displaySwitch.state == .on, sleepValid: sleepSwitch.isEnabled, displayValid: displaySwitch.isEnabled, powerText: powerLabel.stringValue)
-        let nativeState = "\(sleepSwitch.state.rawValue):\(displaySwitch.state.rawValue):\(sidecarIsConnected())"
-        if nativeState != lastNativeWidgetState {
-            lastNativeWidgetState = nativeState
+    }
+    private func requestWidgetReload() {
+        trailingReload?.cancel()
+        logger.notice("Request widget state=\(self.lastNativeWidgetState, privacy: .public)")
+        WidgetCenter.shared.reloadTimelines(ofKind: "LidWorkNativeWidget")
+        // WidgetKit coalesces rapid requests. One trailing request carries the
+        // final state after its visible-widget throttle window, without polling.
+        let work = DispatchWorkItem {
             WidgetCenter.shared.reloadTimelines(ofKind: "LidWorkNativeWidget")
         }
+        trailingReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.5, execute: work)
     }
 
+    func applySleep(_ desired: Bool) {
+        sleepSwitch.state = desired ? .on : .off
+        toggleSleep(sleepSwitch)
+    }
+    func applyDisplay(_ desired: Bool) {
+        displaySwitch.state = desired ? .on : .off
+        toggleDisplay(displaySwitch)
+    }
     @objc func toggleSleep(_ sender: NSSwitch) {
-        guard !busy else { return }
         let desired = sender.state == .on
+        performSetting(message: "正在更改合盖工作…", success: desired ? "合盖工作已开启。" : "已恢复系统睡眠行为。") { try setEnabled(desired) }
+    }
+    @objc func toggleDisplay(_ sender: NSSwitch) {
+        let desired = sender.state == .on
+        performSetting(message: "正在更改镜像保活…", success: desired ? "镜像保活已开启，可以连接 iPad。" : "镜像保活已关闭，显示画布已移除。") { try setDisplayAwake(desired) }
+    }
+    private func performSetting(message: String, success: String, operation: @escaping () throws -> Void) {
+        guard !busy && !model.connecting else { return }
         busy = true
-        sender.isEnabled = false
-        displaySwitch.isEnabled = false
-        widget?.setBusy(true, message: "正在更改合盖工作设置…")
-        updateFeedback("正在更改设置；如系统要求，请验证管理员身份。")
+        model.busy = true
+        widget?.setBusy(true, message: message)
+        updateFeedback(message)
         DispatchQueue.global(qos: .userInitiated).async {
             var issue: String?
-            do { try setEnabled(desired) } catch { issue = error.localizedDescription }
+            do { try operation() } catch { issue = error.localizedDescription }
             DispatchQueue.main.async {
                 self.busy = false
+                self.model.busy = false
                 self.widget?.setBusy(false, message: "")
-                self.refresh()
-                if let issue = issue {
-                    self.updateFeedback(issue)
-                    let alert = NSAlert()
-                    alert.messageText = "设置未完成"
-                    alert.informativeText = issue
-                    alert.addButton(withTitle: "好")
-                    self.showFullPanel()
-                    alert.beginSheetModal(for: self.window)
-                } else {
-                    self.updateFeedback(desired ? "合盖工作已开启" : "已恢复系统睡眠行为")
-                }
+                self.refresh(forceWidget: true)
+                if let issue { self.presentError(issue) } else { self.updateFeedback(success) }
+                self.processNextNativeURL()
             }
         }
     }
-
-    @objc func toggleDisplay(_ sender: NSSwitch) {
-        guard !busy else { return }
-        let desired = sender.state == .on
-        busy = true
-        sender.isEnabled = false
-        sleepSwitch.isEnabled = false
-        widget?.setBusy(true, message: "正在更改镜像保活…")
-        updateFeedback("正在\(desired ? "开启" : "关闭")镜像保活…")
-        DispatchQueue.global(qos: .userInitiated).async {
-            var issue: String?
-            do { try setDisplayAwake(desired) } catch { issue = error.localizedDescription }
-            DispatchQueue.main.async {
-                self.busy = false
-                self.widget?.setBusy(false, message: "")
-                self.refresh()
-                if let issue = issue {
-                    self.updateFeedback(issue)
-                    let alert = NSAlert()
-                    alert.messageText = "设置未完成"
-                    alert.informativeText = issue
-                    alert.addButton(withTitle: "好")
-                    self.showFullPanel()
-                    alert.beginSheetModal(for: self.window)
-                } else {
-                    self.updateFeedback(desired ? "镜像保活已开启，可连接 iPad" : "镜像保活已关闭，显示画布已移除")
-                }
-            }
-        }
+    private func presentError(_ message: String) {
+        updateFeedback(message)
+        showFullPanel()
+        let alert = NSAlert()
+        alert.messageText = "设置未完成"
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window)
     }
 }
 
 if let argument = CommandLine.arguments.dropFirst().first {
     do {
         switch argument {
-        case "--status": break
-        case "--enable": try setEnabled(true)
-        case "--disable": try setEnabled(false)
-        case "--display-status": print(try readDisplayAwake() ? "enabled" : "disabled"); exit(0)
-        case "--display-enable": try setDisplayAwake(true); print(try readDisplayAwake() ? "enabled" : "disabled"); exit(0)
-        case "--display-disable": try setDisplayAwake(false); print(try readDisplayAwake() ? "enabled" : "disabled"); exit(0)
+        case "--status": print(try readEnabled() ? "enabled" : "disabled")
+        case "--enable": try setEnabled(true); print(try readEnabled() ? "enabled" : "disabled")
+        case "--disable": try setEnabled(false); print(try readEnabled() ? "enabled" : "disabled")
+        case "--display-status": print(try readDisplayAwake() ? "enabled" : "disabled")
+        case "--display-enable": try setDisplayAwake(true); print(try readDisplayAwake() ? "enabled" : "disabled")
+        case "--display-disable": try setDisplayAwake(false); print(try readDisplayAwake() ? "enabled" : "disabled")
+        case "--snapshot-json":
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
+            print(String(decoding: try encoder.encode(DeviceSnapshot.current()), as: UTF8.self))
+        case "--refresh-widgets":
+            WidgetCenter.shared.reloadTimelines(ofKind: "LidWorkNativeWidget")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            print("requested")
+        case "--render-previews":
+            guard CommandLine.arguments.count > 2 else { throw failure("需要指定预览输出目录。") }
+            try MainActor.assumeIsolated { try renderPreviews(to: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)) }
         default: throw failure("未知参数。")
         }
-        print(try readEnabled() ? "enabled" : "disabled")
-    } catch {
-        fputs("\(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
 } else {
     let app = NSApplication.shared
     let delegate = AppDelegate()

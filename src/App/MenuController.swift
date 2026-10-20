@@ -57,8 +57,7 @@ final class ControlMenu: NSObject {
         if !message.isEmpty { feedback(message) }
     }
     func feedback(_ message: String) {
-        owner?.feedbackLabel.stringValue = message
-        owner?.feedbackLabel.toolTip = message
+        owner?.updateFeedback(message)
     }
     private func report(_ message: String) { feedback(message); owner?.showFullPanel() }
     @objc func statusMenu(_ sender: NSButton) {
@@ -104,13 +103,16 @@ final class ControlMenu: NSObject {
                 let item = menu.addItem(withTitle: "断开 iPad 镜像", action: #selector(selectDisconnect(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = device
             }
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -5), in: sender)
+            if let content = owner?.window.contentView {
+                menu.popUp(positioning: nil, at: NSPoint(x: content.bounds.midX, y: content.bounds.midY - 110), in: content)
+            }
         } catch { report(error.localizedDescription) }
     }
     @objc func selectConnect(_ sender: NSMenuItem) { if let device = sender.representedObject as? NSObject { connect(device: device, desired: true) } }
     @objc func selectDisconnect(_ sender: NSMenuItem) { if let device = sender.representedObject as? NSObject { connect(device: device, desired: false) } }
     private func connect(device: NSObject, desired: Bool) {
         connecting = true
+        owner?.model.connecting = true
         mirrorButton.title = desired ? "正在连接 iPad…" : "正在断开…"
         mirrorButton.isEnabled = false
         feedback(desired ? "请保持 iPad 解锁，正在建立镜像" : "正在断开 iPad 镜像")
@@ -131,8 +133,10 @@ final class ControlMenu: NSObject {
     }
     private func finishConnection(_ message: String, failed: Bool = false) {
         connecting = false
-        owner?.refresh()
+        owner?.model.connecting = false
+        owner?.refresh(forceWidget: true)
         feedback(message)
         if failed { owner?.showFullPanel() }
+        owner?.processNextNativeURL()
     }
 }

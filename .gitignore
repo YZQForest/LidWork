@@ -19,3 +19,5 @@ dist/
 .swiftpm/
 .build/
 xcuserdata/
+__pycache__/
+*.pyc

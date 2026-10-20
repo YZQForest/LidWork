@@ -10,8 +10,8 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `LidWork-1.4.1-macos-arm64.dmg` | 打开磁盘映像，把应用拖到 Applications |
-| `LidWork-1.4.1-macos-arm64.zip` | 解压得到完整 `.app`，可放到应用程序或桌面 |
+| `LidWork-1.5.0-macos-arm64.dmg` | 打开磁盘映像，把应用拖到 Applications |
+| `LidWork-1.5.0-macos-arm64.zip` | 解压得到完整 `.app`，可放到应用程序或桌面 |
 | `SHA256SUMS.txt` | 校验安装包完整性 |
 
 1. 把应用复制到固定位置，打开「合盖工作开关」。应用通常在后台运行，菜单栏会出现笔记本图标。
@@ -21,11 +21,21 @@
 
 首次更改合盖工作设置时，macOS 可能要求管理员验证。发布包使用 ad hoc 本地签名，**没有 Developer ID 签名或 Apple 公证**；从 GitHub 下载到其他 Mac 时可能出现 Gatekeeper 提示。请确认来源，或按下文从源码自行构建。
 
-原生小组件由 WidgetKit 调度刷新，文字状态可能稍有延迟。菜单栏 →「打开控制窗口…」可查看更及时的系统状态并管理 iPad 连接。右下角悬浮面板已移除，登录后台运行也不会自动弹出控制窗口。
+1.5.0 修复了更新后旧扩展驻留导致的状态不同步。App 与小组件共用同一套内核、显示画布和唤醒断言检测；操作完成后主动刷新，并合并快速操作后的尾部更新。原生小组件仍由 WidgetKit 调度，通常有数秒延迟。中号右上角可手动刷新，页脚显示观测时间；未知状态不会当作关闭。小号用于概览并打开控制台，中号提供三个直接操作。菜单栏 →「打开控制窗口…」可查看更及时的系统状态并管理 iPad 连接。右下角悬浮面板已移除，登录后台运行也不会自动弹出控制窗口。
 
 > 合盖工作会暂停系统的自动和手动睡眠。合盖使用 iPad 时，两个开关都应开启；放进包里或长期不用前，请先打开上盖并关闭两个开关。
 
 详细操作见 [使用说明](docs/USER_GUIDE.zh-CN.md)，验证范围见 [本机验证记录](docs/VERIFICATION.md)。
+
+## 界面
+
+App 使用原生 Liquid Glass（macOS 26+）、实时窗口背景模糊和高斯光晕；旧系统使用半透明材质。小组件适配系统的玻璃与着色模式，背景是否透明由 macOS 的小组件样式决定。
+
+以下是采用演示状态生成的内容预览，实时折射、窗口背景模糊和原生开关由 macOS 绘制：
+
+<img src="docs/assets/app-dark.png" width="480" alt="App 深色内容预览">
+
+<img src="docs/assets/widget-dark.png" width="344" alt="中号小组件深色内容预览"> <img src="docs/assets/widget-light.png" width="344" alt="中号小组件浅色内容预览">
 
 ## 三个操作如何工作
 
@@ -41,11 +51,12 @@
 
 ## 从源码构建
 
-需要 macOS、Xcode Command Line Tools（或完整 Xcode）和 Python 3。无需第三方包管理器或网络依赖。宿主应用和后台组件的部署目标为 macOS 13，小组件为 macOS 14；整个发布包以 macOS 14+ 为使用要求。
+需要 macOS、包含 macOS 26+ SDK 的 Xcode Command Line Tools（或 Xcode 26+）和 Python 3。无需第三方包管理器或网络依赖。宿主应用和后台组件的部署目标为 macOS 13，小组件为 macOS 14；整个发布包以 macOS 14+ 为使用要求。
 
 ```sh
 git clone https://github.com/YZQForest/LidWork.git
 cd LidWork
+./scripts/test.sh
 ./scripts/build.sh
 ./scripts/verify.sh --live-status
 ./scripts/package.sh
@@ -65,14 +76,18 @@ src/
     main.swift                 应用生命周期、两个开关、操作队列、状态核验
     MenuController.swift       菜单栏、登录后台运行、iPad 管理
     Sidecar.swift              随航连接与镜像配置
+    ControlDashboard.swift     原生玻璃控制台与深浅色布局
+    PreviewRenderer.swift      明确标记为演示状态的内容预览
   NativeWidget/
     LidWorkNativeWidget.swift  WidgetKit 时间线、布局和三个操作链接
+  Shared/                      两个进程共用的真实状态检测和视觉样式
   DisplayHelper/
     VirtualCanvas.m            虚拟画布、镜像跟随、显示器保活断言
 resources/
   App/                         宿主 Info.plist 与图标
   NativeWidget/                扩展 Info.plist 与沙盒权限
-scripts/                       构建、检查和打包
+scripts/                       构建、检查、打包与本机更新
+tests/                         状态语义、旧状态操作、版本与进程匹配回归
 tools/                         图标生成器与只读显示器诊断工具
 docs/                          使用、安装、架构与验证说明
 VERSION / BUILD_NUMBER         发布版本与 bundle build number
@@ -80,9 +95,20 @@ VERSION / BUILD_NUMBER         发布版本与 bundle build number
 
 仓库只保留当前实现。旧版二进制、旧悬浮面板、诊断日志、设备标识和临时实验不进入源码仓库。
 
+## 本机安装与更新
+
+从源码构建后，可使用更新脚本（默认安装到桌面）：
+
+```sh
+python3 scripts/install_local.py --show
+# 自定义位置：添加 --target "/Applications/合盖工作开关.app"
+```
+
+脚本检查宿主与扩展版本，备份现有程序，只停止目标 App 与其小组件，随后更新并重新注册；不会停止显示画布后台任务或改变开关。失败时恢复旧程序。
+
 ## 更新与卸载
 
-更新前退出应用，把新 `.app` 覆盖到原安装位置。应用需保持完整，不能只复制其中的可执行文件，也不要移除 `Contents/PlugIns` 中的原生小组件。更新后如果小组件暂未刷新，可重新打开应用，必要时移除并重新添加桌面小组件。
+更新前退出应用，把新 `.app` 覆盖到原安装位置。首次启动新 build 会自动清理本项目的旧小组件进程并重新注册，解决旧进程保留旧版本号造成的刷新失败。应用需保持完整，不能只复制其中的可执行文件，也不要移除 `Contents/PlugIns` 中的原生小组件。更新后如果小组件暂未刷新，可重新打开应用，必要时移除并重新添加桌面小组件。
 
 卸载前打开上盖，关闭两个开关，菜单栏取消「登录时在后台运行」，退出应用后移除桌面小组件并删除 `.app`。完整的恢复命令和后台任务路径见 [使用说明](docs/USER_GUIDE.zh-CN.md#卸载和恢复)。
 

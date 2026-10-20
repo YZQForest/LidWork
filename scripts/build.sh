@@ -39,6 +39,12 @@ xcrun --sdk macosx swiftc -O -target arm64-apple-macosx13.0 \
     "$repo_root/src/App/main.swift" \
     "$repo_root/src/App/MenuController.swift" \
     "$repo_root/src/App/Sidecar.swift" \
+    "$repo_root/src/App/ControlDashboard.swift" \
+    "$repo_root/src/App/PreviewRenderer.swift" \
+    "$repo_root/src/Shared/DeviceSnapshot.swift" \
+    "$repo_root/src/Shared/OwnedWidgetProcess.swift" \
+    "$repo_root/src/Shared/GlassStyle.swift" \
+    "$repo_root/src/NativeWidget/WidgetViews.swift" \
     -o "$app/Contents/MacOS/LidWork"
 
 xcrun --sdk macosx clang -O2 -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 \
@@ -51,6 +57,9 @@ xcrun --sdk macosx clang -O2 -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 \
 xcrun --sdk macosx swiftc -O -target arm64-apple-macosx14.0 \
     -application-extension -parse-as-library \
     "$repo_root/src/NativeWidget/LidWorkNativeWidget.swift" \
+    "$repo_root/src/NativeWidget/WidgetViews.swift" \
+    "$repo_root/src/Shared/DeviceSnapshot.swift" \
+    "$repo_root/src/Shared/GlassStyle.swift" \
     -Xlinker -e -Xlinker _NSExtensionMain \
     -o "$extension/Contents/MacOS/LidWorkNativeWidget"
 
