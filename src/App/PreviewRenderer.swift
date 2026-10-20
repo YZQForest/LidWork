@@ -23,7 +23,7 @@ func renderPreviews(to directory: URL) throws {
         try save(app, width: 600, height: 666, scheme: scheme, name: "app-\(label).png")
         for (size, family, width, height) in [("medium", WidgetFamily.systemMedium, CGFloat(344), CGFloat(164)), ("small", WidgetFamily.systemSmall, CGFloat(164), CGFloat(164))] {
             let view = NativeControlView(entry: ControlEntry(date: Date(), snapshot: .preview), previewFamily: family)
-                .background(AuroraBackground(compact: true))
+                .background(WidgetNeutralBackground())
                 .clipShape(RoundedRectangle(cornerRadius: 27.88))
             try save(view, width: width, height: height, scheme: scheme, name: "widget-\(size)-\(label).png")
         }

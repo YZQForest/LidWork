@@ -23,10 +23,10 @@ struct LidWorkNativeWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ControlProvider()) { entry in
             NativeControlView(entry: entry)
-                .containerBackground(for: .widget) { AuroraBackground(compact: true) }
+                .containerBackground(for: .widget) { WidgetNeutralBackground() }
         }
         .configurationDisplayName("合盖控制")
-        .description("玻璃控制台：合盖工作、镜像保活与 iPad 连接。中号可直接操作。")
+        .description("简洁的原生控制：合盖工作、镜像保活与 iPad 连接。")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
     }

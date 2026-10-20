@@ -57,6 +57,6 @@
 
 ## 视觉与预览
 
-`ControlDashboard` 使用 NSVisualEffectView 的 behindWindow 实时模糊、SwiftUI Liquid Glass（macOS 26+）和模糊渐变光晕。`GlassStyle` 统一色彩；小组件使用可移除背景，适应系统 fullColor/玻璃着色模式。
+`ControlDashboard` 使用 NSVisualEffectView 的 behindWindow 实时模糊、SwiftUI Liquid Glass（macOS 26+）和模糊渐变光晕。`GlassStyle` 提供 App 的色彩和材质。1.5.1 小组件改用独立的中性可移除背景与简约列表；全彩样式保留深浅色背景，透明/着色样式让 WidgetKit 移除背景并提供原生 Liquid Glass。小组件不叠加自绘渐变或模糊光晕。
 
 `--render-previews <目录>` 生成明确使用演示状态的深浅色内容预览。ImageRenderer 无法绘制 AppKit 原生开关和实时玻璃，因此静态预览只绘制对应的形状与材质示意，不能当作实际窗口截图或同步测试证据；实际窗口已由用户确认显示完整。
