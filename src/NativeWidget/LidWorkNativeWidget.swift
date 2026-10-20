@@ -26,7 +26,7 @@ struct LidWorkNativeWidget: Widget {
                 .containerBackground(for: .widget) { WidgetNeutralBackground() }
         }
         .configurationDisplayName("合盖控制")
-        .description("简洁的原生控制：合盖工作、镜像保活与 iPad 连接。")
+        .description("控制中心磁贴：合盖工作、镜像保活与 iPad 连接。")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
     }

@@ -21,6 +21,20 @@ func renderPreviews(to directory: URL) throws {
         let app = ControlDashboard(model: model, setSleep: { _ in }, setDisplay: { _ in }, mirror: {}, refresh: {}, preview: true)
             .clipShape(RoundedRectangle(cornerRadius: 24))
         try save(app, width: 600, height: 666, scheme: scheme, name: "app-\(label).png")
+        for (state, entry) in [
+            ("mixed", ControlEntry(date: Date(), snapshot: DeviceSnapshot(sleep: true, display: false, ipad: false, sampledAt: Date()))),
+            ("unknown", ControlEntry(date: Date(), snapshot: .preview, expired: true))
+        ] {
+            let study = NativeControlView(entry: entry, previewFamily: .systemMedium)
+                .background(WidgetNeutralBackground())
+                .clipShape(RoundedRectangle(cornerRadius: 27.88))
+            try save(study, width: 344, height: 164, scheme: scheme, name: "widget-\(state)-\(label).png")
+        }
+        let accented = NativeControlView(entry: ControlEntry(date: Date(), snapshot: .preview), previewFamily: .systemMedium)
+            .environment(\.widgetRenderingMode, .accented)
+            .background(WidgetNeutralBackground())
+            .clipShape(RoundedRectangle(cornerRadius: 27.88))
+        try save(accented, width: 344, height: 164, scheme: scheme, name: "widget-accented-\(label).png")
         for (size, family, width, height) in [("medium", WidgetFamily.systemMedium, CGFloat(344), CGFloat(164)), ("small", WidgetFamily.systemSmall, CGFloat(164), CGFloat(164))] {
             let view = NativeControlView(entry: ControlEntry(date: Date(), snapshot: .preview), previewFamily: family)
                 .background(WidgetNeutralBackground())
