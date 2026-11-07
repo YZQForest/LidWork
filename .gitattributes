@@ -7,3 +7,5 @@
 *.plist text eol=lf
 *.entitlements text eol=lf
 *.icns binary
+*.png binary
+*.webp binary

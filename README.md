@@ -33,7 +33,7 @@ App 使用原生 Liquid Glass（macOS 26+）、实时窗口背景模糊和高斯
 
 以下是采用演示状态生成的内容预览；实际桌面玻璃和窗口背景模糊由 macOS 绘制：
 
-<img src="docs/assets/app-dark.png" width="480" alt="App 深色内容预览">
+<img src="docs/assets/app-dark.webp" width="480" alt="App 深色内容预览">
 
 <img src="docs/assets/widget-dark.png" width="344" alt="中号小组件深色内容预览"> <img src="docs/assets/widget-light.png" width="344" alt="中号小组件浅色内容预览">
 
@@ -62,7 +62,7 @@ cd LidWork
 ./scripts/package.sh
 ```
 
-私有仓库需要先登录有权限的 GitHub 账号。构建结果在 `build/合盖工作开关.app`；ZIP、DMG、安装说明和 SHA-256 校验文件在 `dist/`。这些生成文件不进入 Git，程序分发放在 GitHub Release。
+构建结果在 `build/合盖工作开关.app`；ZIP、DMG、安装说明和 SHA-256 校验文件在 `dist/`。这些生成文件不进入 Git，程序分发放在 GitHub Release。
 
 `verify.sh` 检查应用结构、版本、ARM64 架构、代码签名、WidgetKit 入口和扩展沙盒；`--live-status` 额外只读检查本机睡眠和保活状态，不会切换设置。GitHub Actions 执行构建、结构检查和打包，不代表完成真实合盖与 iPad 测试。
 
